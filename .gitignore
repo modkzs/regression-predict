@@ -70,4 +70,5 @@ cv_result.csv
 train
 X.npy
 Y.npy
+venv/
 
