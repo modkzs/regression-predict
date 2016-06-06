@@ -60,3 +60,14 @@ target/
 
 #Ipython Notebook
 .ipynb_checkpoints
+
+.idea/
+data/*
+.DS_Store
+.python-version
+Best_F
+cv_result.csv
+train
+X.npy
+Y.npy
+
