@@ -71,4 +71,5 @@ train
 X.npy
 Y.npy
 venv/
+!data/.gitexist
 
