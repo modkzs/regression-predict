@@ -1,11 +1,14 @@
 # -*- coding: utf-8 -*-
+from sklearn.svm import SVR
+
 from feature.TimeSeriesFeature import TimeSeriesFeature
 from sklearn import linear_model
-from sklearn.ensemble import AdaBoostRegressor
+from sklearn.ensemble import AdaBoostRegressor, GradientBoostingRegressor
 from sklearn.tree import DecisionTreeRegressor
 import xgboost as xgb
 from sklearn.ensemble.forest import RandomForestRegressor
 import math
+import numpy as np
 
 __author__ = 'yixuanhe'
 
@@ -99,16 +102,20 @@ def train_random_forest(X, Y):
 
 
 def train_xgboost(X, Y):
-    dtrain = xgb.DMatrix(X, label=Y)
-    watchlist = [(dtrain, 'train')]
+    # dtrain = xgb.DMatrix(X, label=Y)
+    # watchlist = [(dtrain, 'train')]
+    #
+    # print('start running example to start from a initial prediction')
+    #
+    # param = {'max_depth': 5, 'learning_rate': 0.03, 'silent': 1, 'objective': 'reg:linear',
+    #          'subsample': 0.7, 'alpha': 0.8, 'lambda': 0.8, 'booster': 'gblinear'}
+    # num_round = 200
+    # # bst = xgb.cv(param, dtrain, num_round, nfold=10, metrics={'error'}, seed=0)
+    # bst = xgb.train(param, dtrain, num_round)
 
-    print('start running example to start from a initial prediction')
-
-    param = {'max_depth': 5, 'learning_rate': 0.03, 'silent': 1, 'objective': 'reg:linear',
-             'subsample': 0.7, 'alpha': 0.8, 'lambda': 0.8, 'booster': 'gblinear'}
-    num_round = 200
-    # bst = xgb.cv(param, dtrain, num_round, nfold=10, metrics={'error'}, seed=0)
-    bst = xgb.train(param, dtrain, num_round)
+    bst = xgb.XGBRegressor(max_depth=6, learning_rate=0.02, n_estimators=300, silent=True, objective='reg:linear',
+                           subsample=0.7, reg_alpha=0.8, reg_lambda=0.8)
+    bst.fit(X, Y)
 
     return bst
 
@@ -121,6 +128,12 @@ def single_predict(model, X):
 
     Y = model.predict(dtest)
     return Y
+
+
+def train_gbrt(X, Y):
+    gbrt = GradientBoostingRegressor(n_estimators=100, learning_rate=0.1, max_depth=4, random_state=0, loss='ls')
+    gbrt.fit(X, Y)
+    return gbrt
 
 
 def train(model_feature, check, weight=None):
@@ -141,13 +154,27 @@ def train(model_feature, check, weight=None):
         feature = feature_sample[feature_gen]
         model = func(feature[0], feature[1])
         models[model] = feature_gen
-        # cur = single_predict(model, feature[0])
-        # for i in range(length):
-        #     Y[i].append(cur[i])
         weights[model] = feature_gen.get_rmse(model)
         print(func.__name__ + ": " + str(weights[model]))
 
     print("train over")
+
+    ys = []
+    for model in models:
+        feature_gen = model_feature[func]
+        feature = feature_sample[feature_gen]
+        Y = model.predict(feature[0])
+        actual = feature[1]
+        ys.append(Y)
+    ys.append(actual)
+
+    with open("data/ensemble_train", "w") as f:
+        for i in range(len(ys[0])):
+            line = ""
+            for y in ys:
+                print(type(y[i]))
+                line = line + str(y[i]) + " "
+            f.write(line + "\n")
 
     # final_model = train_liner(Y, actual)
 
@@ -155,9 +182,21 @@ def train(model_feature, check, weight=None):
     w = []
     for model in models:
         feature_gen = models[model]
-        result.append(feature_gen.predict_result(model))
+        model_predict = feature_gen.predict_result(model)
+        result.append(model_predict)
         print(model)
         w.append(1/weights[model])
+
+    with open("data/ensemble_result", "w") as f, open("data/test_full_start") as r:
+        i = 0
+        for l in r.readlines():
+            data = l.split(" ")
+            line = data[0] + " " + data[1] + " " + data[6] + " "
+            for re in result:
+                line = line + str(re[i]) + " "
+            line += data[2]
+            i += 1
+            f.write(line + "\n")
 
     avg = [1 for func in model_feature]
 
@@ -197,128 +236,87 @@ def train(model_feature, check, weight=None):
     return final
 
 
+def train_svm(X, Y):
+    svr = SVR(kernel='rbf', C=100, gamma=1, verbose=True, cache_size=1024)
+    print("start train")
+    svr.fit(X, Y)
+    print("train finish")
+    return svr
+
+
+def high_level_test(train_path, test_path, func):
+    train_X = []
+    train_Y = []
+    with open(train_path) as f:
+        for l in f.readlines():
+            data = l.strip().split(" ")
+            train_Y.append(math.log(float(data[-1])+1))
+            train_X.append([(max(float(x), 0)) for x in data[:-1]])
+    model = func(train_X, train_Y)
+
+    predict = {}
+    actual = {}
+    with open(test_path) as f:
+        for l in f.readlines():
+            data = l.strip().split(" ")
+            Y = int(data[-1])
+            X = [max(float(x), 0) for x in data[3:-1]]
+            X = np.array(X).reshape(1, (len(X)))
+            y = math.exp(model.predict(X))-1
+            artist = data[0]
+            date = data[2]
+            key = artist + "-" + date
+            predict[key] = predict.get(key, 0) + y
+            actual[key] = actual.get(key, 0) + Y
+
+        sigma = {}
+        Phi = {}
+        for k in actual:
+            artist = k.split("-")[0]
+            if actual.get(k, 0.0) == 0:
+                continue
+            sigma[artist] = sigma.get(artist, 0) + ((math.floor(predict.get(k, 0.0)+0.5) - actual.get(k, 0.0)) / actual.get(k, 0.0)) ** 2
+            Phi[artist] = Phi.get(artist, 0.0) + actual[k]
+
+        for k in sigma:
+            sigma[k] = math.sqrt(sigma.get(k, 0.0) / 30)
+            Phi[k] = math.sqrt(Phi[k])
+
+        F = 0
+        i = 0
+        total = 0
+        for k in sigma:
+            F += (1 - sigma[k]) * Phi[k]
+            total += Phi[k]
+            i += 1
+
+        print(model.__class__.__name__)
+        print(F)
+        print(total)
+
+        return F
+
+
 if __name__ == "__main__":
-    cut_avg = False
-    interval = 15
-
-    feature_not_used = [9, 10]
-    Fs = []
-
-    tsfws = TimeSeriesFeatureWithSmooth(cut_avg, interval, 'data/train_data_full_start_avg',
-                                        'data/test_full_start_avg', exclude=feature_not_used)
-    tsf = TimeSeriesFeature(cut_avg, interval, 'data/train_data_full_start_avg',
-                            'data/test_full_start_avg', exclude=feature_not_used)
-
-    tsf = TimeSeriesFeature(cut_avg, interval, 'data/deal_mars_tianchi_full_start_avg',
-                            'data/pose_data', exclude=feature_not_used)
-    tsfws = TimeSeriesFeatureWithSmooth(cut_avg, interval, 'data/deal_mars_tianchi_full_start_avg',
-                                        'data/pose_data', exclude=feature_not_used)
-
-    model_feature = {train_xgboost: tsf, train_liner: tsfws, train_ridge: tsfws, train_cart: tsf}
-    result = train(model_feature, tsfws)
-    tsfws.write_result('data/mars_tianchi_artist_plays_predict_ensemble.csv', result)
-
-
-# if __name__ == "__main__":
-#     cut_avg = False
-#     interval = 15
-#
-#     feature_not_used = [9, 10]
-#     Fs = []
-#
-#     tsfws = TimeSeriesFeatureWithSmooth(cut_avg, interval, 'data/deal_mars_tianchi_full_start_avg',
-#                                         'data/pose_data', exclude=feature_not_used)
-#     tsf = TimeSeriesFeature(cut_avg, interval, 'data/deal_mars_tianchi_full_start_avg',
-#                             'data/pose_data', exclude=feature_not_used)
-#     X_tsf, Y_tsf = tsf.extract()
-#     X_tsfws, Y_tsfws = tsfws.extract()
-#     length = len(X_tsfws)
-#     print("feature extraction over")
-#
-#     line = train_liner(X_tsfws, Y_tsfws)
-#     F = tsfws.get_rmse(line)
-#     print("liner:" + str(F))
-#     Fs.append(F)
-#
-#     xgb = train_xgboost(X_tsf, Y_tsf)
-#     F = tsf.get_rmse(xgb)
-#     print("xgboost:" + str(F))
-#     Fs.append(F)
-#
-#     ridge = train_ridge(X_tsf, Y_tsf)
-#     F = tsf.get_rmse(ridge)
-#     print("ridge:" + str(F))
-#     Fs.append(F)
-#     print("train over")
-#
-#     cart = train_cart(X_tsfws, Y_tsfws)
-#     F = tsf.get_rmse(ridge)
-#     print("ridge:" + str(F))
-#     Fs.append(F)
-#     print("train over")
-#
-#     total = 0
-#     for f in Fs:
-#         total += length/f
-#     for i in range(len(Fs)):
-#         Fs[i] = (length/Fs[i])/total
-#
-#     print("begin predict")
-#     xgb_result = tsfws.predict_result(xgb)
-#     print("xbg over")
-#     line_result = tsf.predict_result(line)
-#     print("line over")
-#     ridge_result = tsf.predict_result(ridge)
-#     print("ridge over")
-#     cart_result = tsfws.predict_result(cart)
-#     print("cart over")
-#
-#     length = len(xgb_result)
-#     final = []
-#     for i in range(length):
-#         final.append(math.floor((line_result[i]*Fs[0] + xgb_result[i]*Fs[1] +
-#                                  ridge_result[i]*Fs[2] + cart_result[i]*Fs[3])+0.5))
-#
-#     print("start check")
-#     tsf.check_result(None, final)
-#     print("over ")
-#
-#     length = len(xgb_result)
-#     final = []
-#     for i in range(length):
-#         final.append(math.floor((xgb_result[i] + line_result[i] + ridge_result[i] + cart_result[i])/4+0.5))
-#
-#     print("start check")
-#     tsf.write_result()
-#     print("over ")
-#
-#     # tsfws = TimeSeriesFeatureWithSmooth(cut_avg, interval, 'data/deal_mars_tianchi_full_start_avg',
-#     #                                     'data/pose_data', exclude=feature_not_used)
-#     # tsf = TimeSeriesFeature(cut_avg, interval, 'data/deal_mars_tianchi_full_start_avg',
-#     #                         'data/pose_data', exclude=feature_not_used)
-#     #
-#     # X_tsf, Y_tsf = tsf.extract()
-#     # X_tsfws, Y_tsfws = tsfws.extract()
-#     # print("feature extraction over")
-#     # xgb = train_xgboost(X_tsf, Y_tsf)
-#     # xgb_result = tsf.predict_result(xgb)
-#     # liner = train_liner(X_tsfws, Y_tsfws)
-#     # liner_result = tsfws.predict_result(liner)
-#     # ridge = train_ridge(X_tsfws, Y_tsfws)
-#     # ridge_result = tsfws.predict_result(ridge)
-#     # print("train over")
-#     #
-#     # total = 0
-#     # for f in Fs:
-#     #     total += 1/f
-#     # for i in range(len(Fs)):
-#     #     Fs[i] /= total
-#     #
-#     # for k in xgb_result:
-#     #     xgb_result[k] = math.floor((xgb_result[k]*Fs[0] + liner_result[k]*Fs[1] + ridge_result[k]*Fs[1])+0.5)
-#     #     liner_result[k] = math.floor((xgb_result[k] + liner_result[k] + ridge_result[k])/3+0.5)
-#     #
-#     # tsf.write_result('data/mars_tianchi_artist_plays_predict_weight.csv', xgb_result)
-#     # tsf.write_result('data/mars_tianchi_artist_plays_predict_avg.csv', xgb_result)
-#     #
-#     # print("write over")
+    for func in [train_ridge, train_liner, train_xgboost, train_random_forest, train_cart, train_gbrt]:
+        print(func)
+        high_level_test("data/ensemble_train", "data/ensemble_result", func)
+    # cut_avg = False
+    # interval = 15
+    #
+    # feature_not_used = [9, 10]
+    # Fs = []
+    #
+    # tsfws = TimeSeriesFeatureWithSmooth(cut_avg, interval, 'data/train_data_full_start_avg',
+    #                                     'data/test_full_start_avg', exclude=feature_not_used)
+    # tsf = TimeSeriesFeature(cut_avg, interval, 'data/train_data_full_start_avg',
+    #                         'data/test_full_start_avg', exclude=feature_not_used)
+    #
+    # # tsf = TimeSeriesFeature(cut_avg, interval, 'data/deal_mars_tianchi_full_start_avg',
+    # #                         'data/pose_data', exclude=feature_not_used)
+    # # tsfws = TimeSeriesFeatureWithSmooth(cut_avg, interval, 'data/deal_mars_tianchi_full_start_avg',
+    # #                                     'data/pose_data', exclude=feature_not_used)
+    #
+    # model_feature = {train_xgboost: tsf, train_liner: tsfws, train_ridge: tsfws, train_cart: tsf}
+    # result = train(model_feature, tsfws)
+    # tsfws.write_result('data/mars_tianchi_artist_plays_predict_ensemble.csv', result)

@@ -72,9 +72,17 @@ class TimeSeriesFeatureRMSLE(TimeSeriesFeature):
 
     def deal_predict(self, y, id, actual):
         super().deal_predict(y, id, actual)
-        y = math.exp(y) - 1
+        return math.exp(y) - 1
 
-        return y
+
+class TimeSeriesFeatureWithSqrt(TimeSeriesFeature):
+    def line_func(self, data, flag):
+        data[2] = math.sqrt(data[2])
+        return super().line_func(data, flag)
+
+    def deal_predict(self, y, id, actual):
+        super().deal_predict(y, id, actual)
+        return y**2
 
 
 def train_ridge(X, Y):
@@ -98,10 +106,24 @@ def train_bagging_xgboost(X, Y):
     return adaboost
 
 
+def train_adaboost_xgboost(X, Y):
+    adaboost = AdaBoostRegressor(xgb.XGBRegressor(max_depth=6, learning_rate=0.02, n_estimators=300, silent=True,
+                                                 objective='reg:linear', subsample=0.7, reg_alpha=0.8,
+                                                 reg_lambda=0.8, booster="gblinear"), loss='exponential')
+    adaboost.fit(X, Y)
+    return adaboost
+
+
 def train_random_forest(X, Y):
     rf = RandomForestRegressor(n_estimators=20)
     rf.fit(X, Y)
     return rf
+
+
+def train_bagging_cart(X, Y):
+    adaboost = BaggingRegressor(DecisionTreeRegressor(max_depth=5) , max_features=0.7, n_estimators=30)
+    adaboost.fit(X, Y)
+    return adaboost
 
 
 def train_xgboost(X, Y):
@@ -116,8 +138,8 @@ def train_xgboost(X, Y):
     # # bst = xgb.cv(param, dtrain, num_round, nfold=10, metrics={'error'}, seed=0)
     # bst = xgb.train(param, dtrain, num_round, watchlist)
 
-    bst = xgb.XGBRegressor(max_depth=6, learning_rate=0.02, n_estimators=300, silent=True, objective='reg:linear',
-                           subsample=0.7, reg_alpha=0.8, reg_lambda=0.8, booster="gblinear")
+    bst = xgb.XGBRegressor(max_depth=5, learning_rate=0.03, n_estimators=200, silent=True, objective='reg:linear',
+                           subsample=0.7, reg_alpha=0.8, reg_lambda=0.8, colsample_bytree=0.75, booster="gblinear")
     bst.fit(X, Y)
 
     return bst
@@ -151,26 +173,27 @@ if __name__ == "__main__":
 
     feature_not_used = [9, 10]
 
-    # tsf = TimeSeriesFeature(cut_avg, interval, 'data/train_data_full_start_avg',
-    #                         'data/test_full_start', exclude=feature_not_used)
-    #
-    # X_tsf, Y_tsf = tsf.extract()
-    # print("feature extract over")
-    # model = train_bagging_xgboost(X_tsf, Y_tsf)
-    # print("train over")
-    # print(model)
-    # F = tsf.check_result(model)
-    # xgb.plot_tree(model)
-    # xgb.plot_importance(model)
-
-    tsf = TimeSeriesFeature(cut_avg, interval, 'data/deal_mars_tianchi_full_start_avg',
-                            'data/pose_data', exclude=feature_not_used)
+    tsf = TimeSeriesFeature(cut_avg, interval, 'data/train_p2',
+                            'data/test_p2', exclude=feature_not_used)
 
     X_tsf, Y_tsf = tsf.extract()
-    print("feature extraction over")
-    xgb = train_bagging_xgboost(X_tsf, Y_tsf)
+    print("feature extract over")
+    model = train_xgboost(X_tsf, Y_tsf)
     print("train over")
-    xgb_result = tsf.predict_result(xgb)
-    tsf.write_result('data/mars_tianchi_artist_plays_predict_single.csv', xgb_result)
+    if hasattr(model, 'feature_importances_'):
+        print(model.feature_importances_)
+    elif hasattr(model, 'coef_'):
+        print(model.coef_)
+    F = tsf.check_result(model)
 
-    print("write over")
+    # tsf = TimeSeriesFeature(cut_avg, interval, 'data/deal_mars_tianchi_full_start_avg',
+    #                         'data/pose_data', exclude=feature_not_used)
+    #
+    # X_tsf, Y_tsf = tsf.extract()
+    # print("feature extraction over")
+    # xgb = train_bagging_xgboost(X_tsf, Y_tsf)
+    # print("train over")
+    # xgb_result = tsf.predict_result(xgb)
+    # tsf.write_result('data/mars_tianchi_artist_plays_predict.csv', xgb_result)
+    #
+    # print("write over")

@@ -30,9 +30,9 @@ class BasicFeature(metaclass=ABCMeta):
             data[2] = float(data[2]) - self.avg.get(data[1], 0)
         else:
             data[2] = float(data[2])
-        data[5] = math.exp(10 - abs(float(data[5])))
-        data[6] = time.mktime(time.strptime(data[6] + " 0:00:00", '%Y%m%d %H:%M:%S'))
-        data[7] = time.mktime(time.strptime(data[7] + " 0:00:00", '%Y%m%d %H:%M:%S'))
+        data[7] = math.exp(10 - abs(float(data[7])))
+        data[5] = time.mktime(time.strptime(data[6] + " 0:00:00", '%Y%m%d %H:%M:%S'))
+        data[6] = time.mktime(time.strptime(data[7] + " 0:00:00", '%Y%m%d %H:%M:%S'))
         for i in range(2, len(data)):
             data[i] = float(data[i])
 
@@ -105,11 +105,8 @@ class BasicFeature(metaclass=ABCMeta):
 
         y = model.predict(dtest)
 
-        val = math.floor(y[0]+0.5)
-        return int(val)
-
-    def check_result(self):
-        pass
+        # val = math.floor(y[0]+0.5)
+        return int(y)
 
     def get_rmse(self, model):
         self.is_rmse = True
@@ -151,7 +148,7 @@ class BasicFeature(metaclass=ABCMeta):
             artist = k.split("-")[0]
             if plays_actual.get(k, 0.0) == 0:
                 continue
-            sigma[artist] = sigma.get(artist, 0) + ((plays_prediction.get(k, 0.0) - plays_actual.get(k, 0.0)) / plays_actual.get(k, 0.0)) ** 2
+            sigma[artist] = sigma.get(artist, 0) + ((math.floor(plays_prediction.get(k, 0.0)+0.5) - plays_actual.get(k, 0.0)) / plays_actual.get(k, 0.0)) ** 2
             Phi[artist] = Phi.get(artist, 0.0) + plays_actual[k]
 
         for k in sigma:
@@ -240,7 +237,7 @@ class BasicFeature(metaclass=ABCMeta):
         with open(write_path, "w") as f:
             for k in plays_prediction:
                 artist, date = k.split("-", 1)
-                play = plays_prediction[k]
+                play = int(math.floor(plays_prediction.get(k, 0.0)+0.5))
                 f.write(artist + "," + str(play) + "," + date + "\n")
 
     def models_test(self, model, X):
